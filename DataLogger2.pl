@@ -8,12 +8,11 @@ use Config::Tiny;
 use IO::Socket::SSL qw( SSL_VERIFY_NONE );
 use LWP::UserAgent;
 use HTTP::Cookies;
-use JSON;
-use HTML::TreeBuilder::XPath;
-use URI::Escape;
 use AnyEvent::WebSocket::Client;
+use MIME::Base64;
+use XML::LibXML;
 
-
+$| = 1;
 
 # -------------------------
 # Config file
@@ -35,10 +34,10 @@ my $file_listen_resources = $Config->{files}->{file_listen_resources};
 # -------------------------
 
 my $file_log = '';
-my $listresources = '';
+my $list_resources = '';
 my $reset_config = '';
 GetOptions(
-    "listresources"   => \$listresources,
+    "list_resources"   => \$list_resources,
     "reset_config"   => \$reset_config,
     "log=s"           => \$file_log,
 );
@@ -51,8 +50,17 @@ GetOptions(
 
 if ($reset_config) {
     my $Config_new = Config::Tiny->new({
-        connection => { server_ip => '192.168.125.1', server_port => '80', https => '1', username => 'Default User', password => 'robotics' },
-        files => { file_server_resources => 'ServerResources.txt', file_listen_resources => 'ListenResources.txt' }
+        connection => {
+			server_ip => '192.168.125.1',
+			server_port => '443',
+			https => '1',
+			username => 'Default User',
+			password => 'robotics'
+		},
+        files => {
+			file_server_resources => 'ServerResources.txt',
+			file_listen_resources => 'ListenResources.txt'
+		}
     });
     $Config_new->write('DataLogger.ini', 'utf8') or die 'Could not create new default config file' . "\n";
     print 'New default config file created.' . "\n";
@@ -67,7 +75,6 @@ if ($reset_config) {
 
 my $ua = LWP::UserAgent->new( timeout => 10, cookie_jar => HTTP::Cookies->new() );
 $ua->credentials($Config->{connection}->{server_ip} . ':' . $Config->{connection}->{server_port}, 'validusers@robapi.abb', $Config->{connection}->{username}, $Config->{connection}->{password});
-$ua->default_header('Accept' => 'application/hal+json;v=2.0');
 
 $ua->ssl_opts(
     SSL_verify_mode => SSL_VERIFY_NONE,
@@ -77,31 +84,71 @@ $ua->ssl_opts(
 sub rws_get {
     my($path) = @_;
     my $baseurl = $Config->{connection}->{https} ? 'https://' . $server_ip . ':' . $server_port : 'http://' . $server_ip . ':' . $server_port;
-    my $res = $ua->get($baseurl . $path);
-        die 'LWP GET failed: ' . $baseurl . $path . "\n" . 'Status: ' . $res->status_line . "\n" . 'Headers:' . "\n" . $res->headers_as_string . "\n" . 'Body:' . "\n" . $res->decoded_content . "\n" unless $res->is_success;
-    return decode_json($res->decoded_content);
+	my $req = HTTP::Request->new(
+		GET => $baseurl . $path,
+		[
+			'Accept' => 'application/xhtml+xml;v=2.0',
+			'Authorization' => 'Basic ' . encode_base64($Config->{connection}->{username} . ':' . $Config->{connection}->{password} . ''),
+		],
+	);
+	$ua->cookie_jar->add_cookie_header($req);
+	my $res = $ua->request($req);
+	
+	open(my $file, '>>http.log') or die 'Cant open logfile for writing';
+		print $file 'NEW REQUEST:' . "\n"
+			. "Request:\n" . $req->as_string . "\n"
+			. "Status: " . $res->status_line . "\n"
+			. "Response headers:\n" . $res->headers_as_string . "\n"
+			. "Response body:\n" . $res->decoded_content . "\n";
+	close($file);
+	
+	unless ($res->is_success) {
+		die 'LWP GET failed: ' . $baseurl . $path . "\n"
+			. "Status: " . $res->status_line . "\n"
+			. "Request:\n" . $req->as_string . "\n"
+			. "Response headers:\n" . $res->headers_as_string . "\n"
+			. "Response body:\n" . $res->decoded_content . "\n";
+	}
+	
+    return $res->decoded_content;
 }
 
 sub rws_post {
-    my($path, %formdata) = @_;
+    my($path, $formdata) = @_;
     my $baseurl = $Config->{connection}->{https} ? 'https://' . $server_ip . ':' . $server_port : 'http://' . $server_ip . ':' . $server_port;
-    my $res = $ua->post($baseurl . $path, Content_Type => 'application/x-www-form-urlencoded;v=2.0', Accept => 'application/xhtml+xml;v=2.0', Content => \%formdata);
-        die 'LWP POST failed: ' . $baseurl . $path . "\n" . 'Status: ' . $res->status_line . "\n" . 'Headers:' . "\n" . $res->headers_as_string . "\n" . 'Body:' . "\n" . $res->decoded_content . "\n" unless $res->is_success;
+	
+	my $req = HTTP::Request->new(
+		POST => $baseurl . $path,
+		[
+			'Accept' => 'application/xhtml+xml;v=2.0',
+			'Content-type' => 'application/x-www-form-urlencoded;v=2.0',
+			'Content-length' => length($formdata),
+			'Authorization' => 'Basic ' . encode_base64($Config->{connection}->{username} . ':' . $Config->{connection}->{password} . ''),
+		],
+		$formdata
+	);
+	$ua->cookie_jar->add_cookie_header($req);
+	my $res = $ua->request($req);
+
+	open(my $file, '>>http.log') or die 'Cant open logfile for writing';
+		print $file 'NEW REQUEST:' . "\n"
+			. "Request:\n" . $req->as_string . "\n"
+			. "Status: " . $res->status_line . "\n"
+			. "Response headers:\n" . $res->headers_as_string . "\n"
+			. "Response body:\n" . $res->decoded_content . "\n";
+	close($file);
+
+	unless ($res->is_success) {
+		die 'LWP POST SUB failed: ' . $baseurl . $path . "\n"
+			. "Status: " . $res->status_line . "\n"
+			. "Request:\n" . $req->as_string . "\n"
+			. "Response headers:\n" . $res->headers_as_string . "\n"
+			. "Response body:\n" . $res->decoded_content . "\n";
+	}
+
     return $res->decoded_content;
 }
 
-sub rws_sub {
-    my($path, $formdata) = @_;
-    my $baseurl = $Config->{connection}->{https} ? 'https://' . $server_ip . ':' . $server_port : 'http://' . $server_ip . ':' . $server_port;
-    my $req = HTTP::Request->new(POST => $baseurl . $path);
-    $req->header('Accept' => 'application/xhtml+xml;v=2.0');
-    $req->header('Content-type' => 'application/x-www-form-urlencoded;v=2.0');
-    $req->header('Content-length' => length($formdata));
-    $req->content($formdata);
-    my $res = $ua->request($req);
-        die 'LWP POST failed: ' . $baseurl . $path . "\n" . 'Request:' . "\n" . $req->as_string . "\n" . 'Status: ' . $res->status_line . "\n" . 'Headers:' . "\n" . $res->headers_as_string . "\n" . 'Body:' . "\n" . $res->decoded_content . "\n" unless $res->is_success;
-    return $res->decoded_content;
-}
 
 
 # -------------------------
@@ -115,33 +162,36 @@ sub list_resources {
     my $start = 0;
     my $limit = 100;
     while (1) {
-        my $io = rws_get('/rw/iosystem/signals?start=' . $start . '&limit=' . $limit);
-        foreach my $sig (@{$io->{_embedded}->{resources}}) {
-            push(@resources, '/rw/iosystem/' . $sig->{_links}->{self}->{href} . ';state');
-        }
+		print 'Requesting /rw/iosystem/signals?start=' . $start . '&limit=' . $limit . '...';
+		my($next, $ref_signalurls) = xhtml_iolist_parse(rws_get('/rw/iosystem/signals?start=' . $start . '&limit=' . $limit));
+		
+		print 'found ' . scalar(@{$ref_signalurls}) . ' signals' . "\n";
+        push(@resources, @{$ref_signalurls});
         # Check for 'next' page
-        if (exists $io->{_links}->{next} && $io->{_links}->{next}->{href}) {
+        if ($next) {
             # Parse next start index from href
-            $start = $1 if ($io->{_links}->{next}->{href} =~ /start=(\d+)/);
-            $limit = $1 if ($io->{_links}->{next}->{href} =~ /limit=(\d+)/);
+            $start = $1 if ($next =~ /start=(\d+)/);
+            $limit = $1 if ($next =~ /limit=(\d+)/);
         } else {
             last;   # no more pages
         }
     }
 
     # RAPID data
-    foreach my $task (get_tasks()) {
+    my $xhtml_tasks = rws_get('/rw/rapid/tasks');
+    foreach my $task (xhtml_tasks_parse($xhtml_tasks)) {
         my $start = 0;
         my $limit = 100;
         while (1) {
-            my $data_xml = rws_post('/rw/rapid/symbols/search?start=' . $start . '&limit=' . $limit, ( view => 'block', vartyp => 'any', blockurl => 'RAPID/' . $task, recursive => 'true', onlyused => 'true', skipshared => 'false', symtyp => 'per' ) );
-            push(@resources, extract_symburls($data_xml));
+			print 'Requesting /rw/rapid/symbols/search?start=' . $start . '&limit=' . $limit . ', blockurl=RAPID/' . $task . '...';
+			my($next, $ref_persdataurls) = xhtml_persdata_parse(rws_post('/rw/rapid/symbols/search?start=' . $start . '&limit=' . $limit, 'view=block&vartyp=any&blockurl=RAPID/' . $task . '&recursive=true&onlyused=true&skipshared=false&symtyp=per'));
+			print 'found ' . scalar(@{$ref_persdataurls}) . ' PERS program-data' . "\n";
+            push(@resources, @{$ref_persdataurls});
 
-            my $nextpage = extract_next_href($data_xml);
-            if ($nextpage) {
+            if ($next) {
                 # Parse next start index from href
-                $start = $1 if ($nextpage =~ /start=(\d+)/);
-                $limit = $1 if ($nextpage =~ /limit=(\d+)/);
+                $start = $1 if ($next =~ /start=(\d+)/);
+                $limit = $1 if ($next =~ /limit=(\d+)/);
             } else {
                 last;   # no more pages
             }
@@ -156,43 +206,107 @@ sub list_resources {
     exit 0;
 }
 
-sub get_tasks {
-    my $res = rws_get('/rw/rapid/tasks');
+sub xhtml_tasks_parse {
+	my($xhtml) = @_;
 
-    return map { $_->{name} } grep { ($_->{_type} // '') eq 'rap-task-li' } @{ $res->{_embedded}->{resources} // [] };
+	my @list;
+	
+	# Parse XML
+	my $dom = XML::LibXML->load_xml(string => $xhtml);
+
+	# XPath context with XHTML namespace
+	my $xpc = XML::LibXML::XPathContext->new($dom);
+	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
+
+	# Locate <div class="state", then try to find link to next page	
+	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
+
+	# Parsing IO loop, Locate <ul in <div class="state", and loop through all <li class="ios-signal-li tags
+	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);	
+	for my $li ($xpc->findnodes('.//x:li[@class="rap-task-li"]', $ul)) {
+		# Find the <a href="foobar" rel="self"
+		my ($a) = $xpc->findnodes('.//x:span[@class="name"]', $li);
+		next unless $a;
+		# Add foobar to resultarray
+		push(@list, $a->textContent);
+	}
+	
+	# If we find a next-page-href, we add it, then the results.
+	return(@list);
 }
 
-sub extract_symburls {
+sub xhtml_iolist_parse {
+	my($xhtml) = @_;
+	
+	my @list;
+	
+	# Parse XML
+	my $dom = XML::LibXML->load_xml(string => $xhtml);
+
+	# XPath context with XHTML namespace
+	my $xpc = XML::LibXML::XPathContext->new($dom);
+	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
+
+	# Locate <div class="state", then try to find link to next page	
+	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
+	my ($a_next) = $xpc->findnodes('.//x:a[@rel="next"]', $div_state);
+
+	# Parsing IO loop, Locate <ul in <div class="state", and loop through all <li class="ios-signal-li tags
+	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);	
+	for my $li ($xpc->findnodes('.//x:li[@class="ios-signal-li"]', $ul)) {
+		# Find the <a href="foobar" rel="self"
+		my ($a) = $xpc->findnodes('.//x:a[@rel="self"]', $li);
+		next unless $a;
+		# Add foobar to resultarray
+		push(@list, '/rw/iosystem/' . $a->getAttribute('href') . ';state');
+	}
+	
+	# If we find a next-page-href, we add it, then the results.
+	return($a_next ? $a_next->getAttribute('href') : undef, \@list);
+}
+
+sub xhtml_persdata_parse {
     my($xhtml) = @_;
 
-    my $tree = HTML::TreeBuilder::XPath->new;
-    $tree->parse($xhtml);
-    $tree->eof;
+	my @list;
+	
+	# Parse XML
+	my $dom = XML::LibXML->load_xml(string => $xhtml);
 
-    my @symbols;
+	# XPath context with XHTML namespace
+	my $xpc = XML::LibXML::XPathContext->new($dom);
+	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
 
-    for my $node ($tree->findnodes('//span[@class="symburl"]')) {
-        my $text = $node->as_text;
-        $text =~ s/^\s+|\s+$//g;   # trim
-        push(@symbols, '/rw/rapid/symbol/' . $text . ';value') if length $text;
-    }
+	# Locate <div class="state", then try to find link to next page	
+	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
+	my ($a_next) = $xpc->findnodes('.//x:a[@rel="next"]', $div_state);
 
-    $tree->delete;
-    return @symbols;
+	# Parsing persdata loop, Locate <ul in <div class="state", and loop through all <li class="rap-symproppers-li tags
+	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);	
+	for my $li ($xpc->findnodes('//x:li[@class="rap-symproppers-li"]')) {
+		my ($a) = $xpc->findnodes('.//x:span[@class="symburl"]', $li);
+		next unless $a;
+		push(@list, $a->textContent . '/data;value');
+	}
+	
+	return($a_next ? $a_next->getAttribute('href') : undef, \@list);
 }
 
-sub extract_next_href {
-    my ($xhtml) = @_;
+sub xhtml_wssurl_parse {
+    my($xhtml) = @_;
+	
+	# Parse XML
+	my $dom = XML::LibXML->load_xml(string => $xhtml);
 
-    my $tree = HTML::TreeBuilder::XPath->new;
-    $tree->parse($xhtml);
-    $tree->eof;
+	# XPath context with XHTML namespace
+	my $xpc = XML::LibXML::XPathContext->new($dom);
+	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
 
-    my ($attr) = $tree->findnodes('//a[@rel="next"]/@href');
-
-    $tree->delete;
-
-    return $attr ? $attr->getValue : undef;
+	# Locate <div class="state", then try to find link to self page	which is subscription websocket url
+	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
+	my ($a_next) = $xpc->findnodes('.//x:a[@rel="self"]', $div_state);
+	
+	return($a_next ? $a_next->getAttribute('href') : undef);
 }
 
 
@@ -213,6 +327,8 @@ sub read_listen_resources {
     return @res;
 }
 
+
+
 # -------------------------
 # WebSocket subscription
 # -------------------------
@@ -229,57 +345,117 @@ sub start_subscription {
         print '  ' . $_ . "\n";
         $subbody .= '&' if ($count > 1);
         $subbody .= 'resources=' . $count;
-        $subbody .= '&' . $count . '=' . uri_escape($_);
-        $subbody .= '&' . $count . '-p=' . ($count <= 64 ? 2 : 1);
+        $subbody .= '&' . $count . '=' . $_;
+        $subbody .= '&' . $count . '-p=' . ($count <= 64 ? 1 : 0);
         $count++;
     }
 
     # Send subscription request
     print 'Sending subscription request...';
-    my $sub_res = rws_sub('/subscription', $subbody);
+    my $xhtml_subscription = rws_post('/subscription', $subbody);
     print 'ok' . "\n";
-    my $ws_url = extract_ws_href($sub_res);
-
+    my $ws_url = xhtml_wssurl_parse($xhtml_subscription);
+	
     print 'Connecting to websocket (' . $ws_url . ')...';
+	my $abb_cookies = getHttpCookies();
     my $client = AnyEvent::WebSocket::Client->new(
-        ssl_no_verify => 1
+        ssl_no_verify => 1,
+		http_headers => {
+			'Cookie' => $abb_cookies,
+		},
+		subprotocol => 'rws_subscription'
     );
-    my $cv = AnyEvent->condvar;
-
+		
     $client->connect($ws_url)->cb(sub {
-        my $conn = eval { shift->recv };
-        die 'WebSocket connect failed: $@' if $@;
-
+		
+        our $connection = eval { shift->recv };
+		
+		if ($@) {
+			# handle error
+			warn $@;
+			return;
+		}
+		
         print 'Connected to WebSocket' . "\n";
 
-        $conn->on(each_message => sub {
-            my ($c, $msg) = @_;
-            print 'UPDATE: ' . $msg->body;
+        $connection->on(each_message => sub {
+            my($connection, $message) = @_;
+			ProcessSubscriptionMessage($connection, $message->body);
         });
 
-        $conn->on(finish => sub {
+        $connection->on(finish => sub {
+			my($connection) = @_;
             print 'WebSocket disconnected';
-            $cv->send;
         });
+		
     });
     print 'ok' . "\n";
 
+	# Enter mainloop and log any incoming messages
     print 'Listening...' . "\n";
-    $cv->recv;
+    AnyEvent->condvar->recv;
 }
 
-sub extract_ws_href {
-    my ($xhtml) = @_;
 
-    my $tree = HTML::TreeBuilder::XPath->new;
-    $tree->parse($xhtml);
-    $tree->eof;
 
-    my ($attr) = $tree->findnodes('//a[@rel="self"]/@href');
+sub getHttpCookies {
+	# Build a request, it is never executed, but cookie_jar will allow us to extract abb cookies this way
+    my $baseurl = $Config->{connection}->{https} ? 'https://' . $server_ip . ':' . $server_port : 'http://' . $server_ip . ':' . $server_port;
+    my $req = HTTP::Request->new(GET => $baseurl . '/rw');
+    $ua->cookie_jar->add_cookie_header($req);
+    return $req->header('Cookie');  # undef if no cookies apply
+}
 
-    $tree->delete;
 
-    return $attr ? $attr->getValue : undef;
+
+#
+
+sub ProcessSubscriptionMessage {
+	my($connection, $message) = @_;
+	
+	#print $message . "\n\n";
+	
+	# Parse XML
+	my $dom = XML::LibXML->load_xml(string => $message);
+
+	# XPath context with XHTML namespace
+	my $xpc = XML::LibXML::XPathContext->new($dom);
+	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
+
+	# Locate <div class="state", then try to find link to next page	
+	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
+
+	# Parsing persdata loop, Locate <ul in <div class="state", and loop through all <li class="rap-symproppers-li tags
+	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);	
+	for my $li ($xpc->findnodes('//x:li[@class="rap-value-ev"]')) {
+		my ($a) = $xpc->findnodes('.//x:a[@rel="self"]', $li);
+		my ($b) = $xpc->findnodes('.//x:span[@class="value"]', $li);
+		next unless $a && $b;
+		print FormatTime(time()) . ' ' . $a->getAttribute('href') . '=' . $b->textContent . "\n";
+		if ($file_log) {
+			open(my $logfile, '>>' , $file_log);
+			print $logfile FormatTime(time()) . ' ' . $a->getAttribute('href') . '=' . $b->textContent . "\n";
+			close($logfile);
+		}
+	}
+	for my $li ($xpc->findnodes('//x:li[@class="ios-signalstate-ev"]')) {
+		my ($a) = $xpc->findnodes('.//x:a[@rel="self"]', $li);
+		my ($b) = $xpc->findnodes('.//x:span[@class="lvalue"]', $li);
+		next unless $a && $b;
+		print FormatTime(time()) . ' ' . $a->getAttribute('href') . '=' . $b->textContent . "\n";
+		if ($file_log) {
+			open(my $logfile, '>>' , $file_log);
+			print $logfile FormatTime(time()) . ' ' . $a->getAttribute('href') . '=' . $b->textContent . "\n";
+			close($logfile);
+		}
+	}
+}
+
+sub FormatTime {
+	my($stime) = @_;
+	
+	my(@td) = localtime($stime);
+	return sprintf("%04d-%02d-%02d %02d:%02d:%02d", $td[5] + 1900, $td[4] + 1, $td[3], $td[2], $td[1], $td[0]);
 }
 
 
@@ -288,7 +464,7 @@ sub extract_ws_href {
 # Main
 # -------------------------
 
-list_resources() if ($listresources);
+list_resources() if ($list_resources);
 
 start_subscription();
 
