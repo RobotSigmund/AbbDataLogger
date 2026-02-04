@@ -286,7 +286,7 @@ sub xhtml_persdata_parse {
 	for my $li ($xpc->findnodes('//x:li[@class="rap-symproppers-li"]')) {
 		my ($a) = $xpc->findnodes('.//x:span[@class="symburl"]', $li);
 		next unless $a;
-		push(@list, $a->textContent . '/data;value');
+		push(@list, '/rw/rapid/symbol/' . $a->textContent . '/data;value');
 	}
 	
 	return($a_next ? $a_next->getAttribute('href') : undef, \@list);
@@ -377,6 +377,7 @@ sub start_subscription {
 		}
 		
         print 'Connected to WebSocket' . "\n";
+		ProcessSubscriptionInit();
 
         $connection->on(each_message => sub {
             my($connection, $message) = @_;
@@ -409,11 +410,25 @@ sub getHttpCookies {
 
 
 #
+sub ProcessSubscriptionInit {
+	print 'Server: ' . $Config->{connection}->{server_ip} . ':' . $Config->{connection}->{server_port} . "\n";
+	if ($file_log) {
+		open(my $logfile, '>>' , $file_log);
+		print $logfile "\n\n" . '##### NEW CONNECTION' . "\n";
+		print $logfile 'Server: ' . $Config->{connection}->{server_ip} . ':' . $Config->{connection}->{server_port} . "\n";
+		print $logfile "\n";
+		close($logfile);
+	}
+}
 
 sub ProcessSubscriptionMessage {
 	my($connection, $message) = @_;
 	
-	#print $message . "\n\n";
+	if ($file_log) {
+		open(my $logfile, '>>' , $file_log);
+		print $logfile FormatTime(time()) . ' ' . $message . "\n\n";
+		close($logfile);
+	}
 	
 	# Parse XML
 	my $dom = XML::LibXML->load_xml(string => $message);
@@ -425,6 +440,9 @@ sub ProcessSubscriptionMessage {
 	# Locate <div class="state", then try to find link to next page	
 	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
 
+
+	# Example websocket subscription update for Pers-data:
+	
 	# Parsing persdata loop, Locate <ul in <div class="state", and loop through all <li class="rap-symproppers-li tags
 	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);	
 	for my $li ($xpc->findnodes('//x:li[@class="rap-value-ev"]')) {
@@ -438,6 +456,30 @@ sub ProcessSubscriptionMessage {
 			close($logfile);
 		}
 	}
+	
+	
+	# Example websocket subscription update for IO:
+	# <?xml version="1.0" encoding="utf-8"?>
+	# <html xmlns="http://www.w3.org/1999/xhtml">
+	# <head>
+	#   <base href="https://192.168.125.1:443/"/>
+	# </head>
+	# <body>
+	#   <div class="state">
+	#     <a href="subscription/53" rel="group"></a>
+	#     <ul>
+	#       <li class="ios-signalstate-ev" title="PROFINET/CPX_R2_Fixture/doR2StraightenerCylOut">
+	#         <a href="/rw/iosystem/signals/PROFINET/CPX_R2_Fixture/doR2StraightenerCylOut;state" rel="self"/>
+	#         <span class="lvalue">0</span>
+	#         <span class="lstate">not simulated</span>
+	#         <span class="quality">good</span>
+	#         <span class="time">276117</span>
+	#       </li>
+	#     </ul>
+	#   </div>
+	# </body>
+	# </html>
+
 	for my $li ($xpc->findnodes('//x:li[@class="ios-signalstate-ev"]')) {
 		my ($a) = $xpc->findnodes('.//x:a[@rel="self"]', $li);
 		my ($b) = $xpc->findnodes('.//x:span[@class="lvalue"]', $li);
