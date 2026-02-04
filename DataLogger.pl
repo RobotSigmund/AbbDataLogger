@@ -14,6 +14,8 @@ use XML::LibXML;
 
 $| = 1;
 
+
+
 # -------------------------
 # Config file
 # -------------------------
@@ -409,7 +411,6 @@ sub getHttpCookies {
 
 
 
-#
 sub ProcessSubscriptionInit {
 	print 'Server: ' . $Config->{connection}->{server_ip} . ':' . $Config->{connection}->{server_port} . "\n";
 	if ($file_log) {
@@ -421,14 +422,16 @@ sub ProcessSubscriptionInit {
 	}
 }
 
+
+
 sub ProcessSubscriptionMessage {
 	my($connection, $message) = @_;
 	
-	if ($file_log) {
-		open(my $logfile, '>>' , $file_log);
-		print $logfile FormatTime(time()) . ' ' . $message . "\n\n";
-		close($logfile);
-	}
+	#if ($file_log) {
+	#	open(my $logfile, '>>' , $file_log);
+	#	print $logfile FormatTime(time()) . ' ' . $message . "\n\n";
+	#	close($logfile);
+	#}
 	
 	# Parse XML
 	my $dom = XML::LibXML->load_xml(string => $message);
@@ -442,6 +445,23 @@ sub ProcessSubscriptionMessage {
 
 
 	# Example websocket subscription update for Pers-data:
+	# <?xml version="1.0" encoding="utf-8"?>
+	# <html xmlns="http://www.w3.org/1999/xhtml"> 
+	# <head>
+	#   <base href="https://192.168.125.1:443/"/> 
+	# </head>
+	# <body> 
+	#   <div class="state">
+	#     <a href="subscription/56" rel="group"></a>
+	#     <ul> 
+	#       <li class="rap-value-ev" title="value">
+	#         <a href="/rw/rapid/symbol/RAPID/T_PLC/R2StraighteningStnMod/nR2StraightenerPlcRsp/data" rel="self"/> 
+	#         <span class="value">0</span>
+	#       </li>  
+	#     </ul> 
+	#   </div>
+	# </body>
+	# </html>
 	
 	# Parsing persdata loop, Locate <ul in <div class="state", and loop through all <li class="rap-symproppers-li tags
 	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);	
@@ -492,6 +512,8 @@ sub ProcessSubscriptionMessage {
 		}
 	}
 }
+
+
 
 sub FormatTime {
 	my($stime) = @_;
