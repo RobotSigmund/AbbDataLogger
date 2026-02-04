@@ -15,6 +15,20 @@ Will generate a new DataLogger.ini file. If you connect through the controller s
 
 <img width="1113" height="123" alt="image" src="https://github.com/user-attachments/assets/a2866ab0-fbcf-4013-bfde-85198f12bf66" />
 
+
+*DataLogger.ini*:  
+```[connection]
+https=1
+password=robotics
+server_ip=192.168.125.1
+server_port=443
+username=Default User
+
+[files]
+file_listen_resources=ListenResources.txt
+file_server_resources=ServerResources.txt
+```
+
 <ins>Generate controller resource tags</ins>
 
 ```DataLogger.pl --list_resources```
