@@ -2,7 +2,7 @@
 
 Datalogging using Abb webservices vs an omnicore robot controller. Note, this is a quick and dirty, not general purpose, but very functional datalogger. Pull resources from controller, choose what you want to watch, run the datalogger and it will store timestamped events where selected data changes value. Very useful for debugging where internal logging is not available.
 
-Standard Perl modules are used for all network activity, also XHTML parson is done by standard modules. This ensures pretty safe datahandling.
+Standard Perl modules are used for all network activity and XHTML data parsing. This ensures pretty safe datahandling.
 
 
 ## Usage
