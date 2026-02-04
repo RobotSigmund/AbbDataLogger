@@ -11,6 +11,7 @@ use HTTP::Cookies;
 use AnyEvent::WebSocket::Client;
 use MIME::Base64;
 use XML::LibXML;
+use Time::HiRes qw(gettimeofday);
 
 $| = 1;
 
@@ -35,13 +36,15 @@ my $file_listen_resources = $Config->{files}->{file_listen_resources};
 # CLI arguments
 # -------------------------
 
-my $file_log = '';
-my $list_resources = '';
-my $reset_config = '';
+my $arg_file_log = '';
+my $arg_list_resources = '';
+my $arg_reset_config = '';
+my $arg_short_naming = '';
 GetOptions(
-    "list_resources"   => \$list_resources,
-    "reset_config"   => \$reset_config,
-    "log=s"           => \$file_log,
+    "list_resources" => \$arg_list_resources,
+    "reset_config" => \$arg_reset_config,
+	"short_naming" => \$arg_short_naming,
+    "log=s" => \$arg_file_log,
 );
 
 
@@ -50,7 +53,7 @@ GetOptions(
 # New default config file
 # -------------------------
 
-if ($reset_config) {
+if ($arg_reset_config) {
     my $Config_new = Config::Tiny->new({
         connection => {
 			server_ip => '192.168.125.1',
@@ -75,9 +78,10 @@ if ($reset_config) {
 # REST client
 # -------------------------
 
+# New useragent
 my $ua = LWP::UserAgent->new( timeout => 10, cookie_jar => HTTP::Cookies->new() );
-$ua->credentials($Config->{connection}->{server_ip} . ':' . $Config->{connection}->{server_port}, 'validusers@robapi.abb', $Config->{connection}->{username}, $Config->{connection}->{password});
 
+# Ignore TLS certificates
 $ua->ssl_opts(
     SSL_verify_mode => SSL_VERIFY_NONE,
     verify_hostname => 0,
@@ -95,17 +99,9 @@ sub rws_get {
 	);
 	$ua->cookie_jar->add_cookie_header($req);
 	my $res = $ua->request($req);
-	
-	open(my $file, '>>http.log') or die 'Cant open logfile for writing';
-		print $file 'NEW REQUEST:' . "\n"
-			. "Request:\n" . $req->as_string . "\n"
-			. "Status: " . $res->status_line . "\n"
-			. "Response headers:\n" . $res->headers_as_string . "\n"
-			. "Response body:\n" . $res->decoded_content . "\n";
-	close($file);
-	
+		
 	unless ($res->is_success) {
-		die 'LWP GET failed: ' . $baseurl . $path . "\n"
+		die 'GET request failed: ' . $baseurl . $path . "\n"
 			. "Status: " . $res->status_line . "\n"
 			. "Request:\n" . $req->as_string . "\n"
 			. "Response headers:\n" . $res->headers_as_string . "\n"
@@ -132,16 +128,8 @@ sub rws_post {
 	$ua->cookie_jar->add_cookie_header($req);
 	my $res = $ua->request($req);
 
-	open(my $file, '>>http.log') or die 'Cant open logfile for writing';
-		print $file 'NEW REQUEST:' . "\n"
-			. "Request:\n" . $req->as_string . "\n"
-			. "Status: " . $res->status_line . "\n"
-			. "Response headers:\n" . $res->headers_as_string . "\n"
-			. "Response body:\n" . $res->decoded_content . "\n";
-	close($file);
-
 	unless ($res->is_success) {
-		die 'LWP POST SUB failed: ' . $baseurl . $path . "\n"
+		die 'POST request failed: ' . $baseurl . $path . "\n"
 			. "Status: " . $res->status_line . "\n"
 			. "Request:\n" . $req->as_string . "\n"
 			. "Response headers:\n" . $res->headers_as_string . "\n"
@@ -166,17 +154,13 @@ sub list_resources {
     while (1) {
 		print 'Requesting /rw/iosystem/signals?start=' . $start . '&limit=' . $limit . '...';
 		my($next, $ref_signalurls) = xhtml_iolist_parse(rws_get('/rw/iosystem/signals?start=' . $start . '&limit=' . $limit));
-		
 		print 'found ' . scalar(@{$ref_signalurls}) . ' signals' . "\n";
         push(@resources, @{$ref_signalurls});
-        # Check for 'next' page
-        if ($next) {
-            # Parse next start index from href
-            $start = $1 if ($next =~ /start=(\d+)/);
-            $limit = $1 if ($next =~ /limit=(\d+)/);
-        } else {
-            last;   # no more pages
-        }
+		
+		last unless $next;
+		# Parse next start index from href
+		$start = $1 if ($next =~ /start=(\d+)/);
+		$limit = $1 if ($next =~ /limit=(\d+)/);
     }
 
     # RAPID data
@@ -190,13 +174,10 @@ sub list_resources {
 			print 'found ' . scalar(@{$ref_persdataurls}) . ' PERS program-data' . "\n";
             push(@resources, @{$ref_persdataurls});
 
-            if ($next) {
-                # Parse next start index from href
-                $start = $1 if ($next =~ /start=(\d+)/);
-                $limit = $1 if ($next =~ /limit=(\d+)/);
-            } else {
-                last;   # no more pages
-            }
+			last unless $next;
+			# Parse next start index from href
+			$start = $1 if ($next =~ /start=(\d+)/);
+			$limit = $1 if ($next =~ /limit=(\d+)/);
         }
     }
 
@@ -311,6 +292,44 @@ sub xhtml_wssurl_parse {
 	return($a_next ? $a_next->getAttribute('href') : undef);
 }
 
+sub xhtml_robotid_parse {
+    my($xhtml) = @_;
+	
+	# Parse XML
+	my $dom = XML::LibXML->load_xml(string => $xhtml);
+
+	# XPath context with XHTML namespace
+	my $xpc = XML::LibXML::XPathContext->new($dom);
+	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
+
+	# Locate <div class="state", then try to find link to self page	which is subscription websocket url
+	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
+	my ($span_ctrl_name) = $xpc->findnodes('.//x:span[@class="ctrl-name"]', $div_state);
+	my ($span_ctrl_id) = $xpc->findnodes('.//x:span[@class="ctrl-id"]', $div_state);
+	
+	return(($span_ctrl_id ? $span_ctrl_id->textContent : '<ctrl-id>') . ' (' . ($span_ctrl_name ? $span_ctrl_name->textContent : '<ctrl-name>') . ')');
+}
+
+sub xhtml_robotware_parse {
+    my($xhtml) = @_;
+	
+	# Parse XML
+	my $dom = XML::LibXML->load_xml(string => $xhtml);
+
+	# XPath context with XHTML namespace
+	my $xpc = XML::LibXML::XPathContext->new($dom);
+	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
+
+	# Locate <div class="state", then try to find link to self page	which is subscription websocket url
+	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
+	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);
+	my ($li) = $xpc->findnodes('.//x:li[@class="sys-system"]', $ul);
+	my ($span_rwversionname) = $xpc->findnodes('.//x:span[@class="rwversionname"]', $li);
+	my ($span_build) = $xpc->findnodes('.//x:span[@class="build"]', $li);
+	
+	return(($span_rwversionname ? $span_rwversionname->textContent : '<rwversionname>') . ' build ' . ($span_build ? $span_build->textContent : '<build>'));
+}
+
 
 
 # -------------------------
@@ -342,14 +361,25 @@ sub start_subscription {
     print 'ok' . "\n";
     # Build request body
     my $subbody;
-    my $count = 1;
+    my $i = 1;
     foreach (@resources) {
         print '  ' . $_ . "\n";
-        $subbody .= '&' if ($count > 1);
-        $subbody .= 'resources=' . $count;
-        $subbody .= '&' . $count . '=' . $_;
-        $subbody .= '&' . $count . '-p=' . ($count <= 64 ? 1 : 0);
-        $count++;
+        $subbody .= '&' if ($i > 1);
+        $subbody .= 'resources=' . $i;
+        $subbody .= '&' . $i . '=' . $_;
+		# Priority
+		# 2=High; Events are sent immediately. Max 64.
+		# 1=Medium; Events are sent within 200ms delay.
+		# 0=Low; Events are sent within 5s.
+		# The first 64 entries in ListenResources will be set to HIGH, remaining will be set to MEDIUM.
+		$subbody .= '&' . $i . '-p=' . ($i <= 64 ? 2 : 1);
+		#$subbody .= '&' . $i . '-p=1';
+        $i++;
+		# Max 1000 resources are allowed for subscriptions.
+		if ($i > 1000) {
+			print 'WARNING: More than 1000 resources added to "ListenResources.txt" . Only the first 1000 are used.' . "\n";
+			last;
+		}
     }
 
     # Send subscription request
@@ -388,7 +418,8 @@ sub start_subscription {
 
         $connection->on(finish => sub {
 			my($connection) = @_;
-            print 'WebSocket disconnected';
+            printl('WebSocket disconnected' . "\n");
+			exit 1;
         });
 		
     });
@@ -412,26 +443,21 @@ sub getHttpCookies {
 
 
 sub ProcessSubscriptionInit {
-	print 'Server: ' . $Config->{connection}->{server_ip} . ':' . $Config->{connection}->{server_port} . "\n";
-	if ($file_log) {
-		open(my $logfile, '>>' , $file_log);
-		print $logfile "\n\n" . '##### NEW CONNECTION' . "\n";
-		print $logfile 'Server: ' . $Config->{connection}->{server_ip} . ':' . $Config->{connection}->{server_port} . "\n";
-		print $logfile "\n";
-		close($logfile);
-	}
+	printl("\n" . '### New session' . "\n");
+	printl(TimeStampTime() . ' Date: ' . TimeStampDate() . "\n");
+	printl(TimeStampTime() . ' Server: ' . $Config->{connection}->{server_ip} . ':' . $Config->{connection}->{server_port} . "\n");
+	my $xhtml_robotid = rws_get('/ctrl/identity');
+	my $robotid = xhtml_robotid_parse($xhtml_robotid);
+	printl(TimeStampTime() . ' ControllerId: ' . $robotid . "\n");
+	my $xhtml_robotware = rws_get('/rw/system');
+	my $robotware = xhtml_robotware_parse($xhtml_robotware);
+	printl(TimeStampTime() . ' Robotware: ' . $robotware . "\n");
 }
 
 
 
 sub ProcessSubscriptionMessage {
 	my($connection, $message) = @_;
-	
-	#if ($file_log) {
-	#	open(my $logfile, '>>' , $file_log);
-	#	print $logfile FormatTime(time()) . ' ' . $message . "\n\n";
-	#	close($logfile);
-	#}
 	
 	# Parse XML
 	my $dom = XML::LibXML->load_xml(string => $message);
@@ -442,6 +468,7 @@ sub ProcessSubscriptionMessage {
 
 	# Locate <div class="state", then try to find link to next page	
 	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
+
 
 
 	# Example websocket subscription update for Pers-data:
@@ -469,13 +496,13 @@ sub ProcessSubscriptionMessage {
 		my ($a) = $xpc->findnodes('.//x:a[@rel="self"]', $li);
 		my ($b) = $xpc->findnodes('.//x:span[@class="value"]', $li);
 		next unless $a && $b;
-		print FormatTime(time()) . ' ' . $a->getAttribute('href') . '=' . $b->textContent . "\n";
-		if ($file_log) {
-			open(my $logfile, '>>' , $file_log);
-			print $logfile FormatTime(time()) . ' ' . $a->getAttribute('href') . '=' . $b->textContent . "\n";
-			close($logfile);
-		}
+		my $resource_name = $a->getAttribute('href');
+		my $resource_value = $b->textContent;
+		my $resource_shortname = '<shortname>';
+		$resource_shortname = $1 if ($resource_name =~ /\/([\w_]+)\/data/);
+		printl(TimeStampTime() . ' ' . ($arg_short_naming ? $resource_shortname : $resource_name) . '=' . $b->textContent . "\n");
 	}
+	
 	
 	
 	# Example websocket subscription update for IO:
@@ -504,31 +531,45 @@ sub ProcessSubscriptionMessage {
 		my ($a) = $xpc->findnodes('.//x:a[@rel="self"]', $li);
 		my ($b) = $xpc->findnodes('.//x:span[@class="lvalue"]', $li);
 		next unless $a && $b;
-		print FormatTime(time()) . ' ' . $a->getAttribute('href') . '=' . $b->textContent . "\n";
-		if ($file_log) {
-			open(my $logfile, '>>' , $file_log);
-			print $logfile FormatTime(time()) . ' ' . $a->getAttribute('href') . '=' . $b->textContent . "\n";
-			close($logfile);
-		}
+		my $resource_name = $a->getAttribute('href');
+		my $resource_value = $b->textContent;
+		my $resource_shortname = '<shortname>';
+		$resource_shortname = $1 if ($resource_name =~ /\/([\w_]+);state/);
+		printl(TimeStampTime() . ' ' . ($arg_short_naming ? $resource_shortname : $resource_name) . '=' . $b->textContent . "\n");
 	}
 }
 
 
 
-sub FormatTime {
-	my($stime) = @_;
-	
-	my(@td) = localtime($stime);
-	return sprintf("%04d-%02d-%02d %02d:%02d:%02d", $td[5] + 1900, $td[4] + 1, $td[3], $td[2], $td[1], $td[0]);
+sub TimeStampTime {
+	my ($sec, $usec) = gettimeofday();
+	my @td = localtime($sec);
+	my $ms = int($usec / 1000);
+	return sprintf("%02d:%02d:%02d.%03d", $td[2], $td[1], $td[0], $ms);
 }
 
+sub TimeStampDate {
+	my @td = localtime(time());
+	return sprintf("%04d-%02d-%02d", $td[5] + 1900, $td[4] + 1, $td[3]);
+}
+
+sub printl {
+	my($text) = @_;
+	print $text;
+	# Also print to file if argument exist
+	if ($arg_file_log) {
+		open(my $logfile, '>>' , $arg_file_log);
+		print $logfile $text;
+		close($logfile);
+	}
+}
 
 
 # -------------------------
 # Main
 # -------------------------
 
-list_resources() if ($list_resources);
+list_resources() if ($arg_list_resources);
 
 start_subscription();
 
