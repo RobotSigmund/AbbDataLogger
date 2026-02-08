@@ -87,53 +87,152 @@ $ua->ssl_opts(
     verify_hostname => 0,
 );
 
-sub rws_get {
-    my($path) = @_;
+sub http_request {
+    my($method, $path, $body, $args) = @_;
+
+    my %object;
+
+    my $start;
+    my $limit;
+
     my $baseurl = $Config->{connection}->{https} ? 'https://' . $server_ip . ':' . $server_port : 'http://' . $server_ip . ':' . $server_port;
-	my $req = HTTP::Request->new(
-		GET => $baseurl . $path,
-		[
-			'Accept' => 'application/xhtml+xml;v=2.0',
-			'Authorization' => 'Basic ' . encode_base64($Config->{connection}->{username} . ':' . $Config->{connection}->{password} . ''),
-		],
-	);
-	$ua->cookie_jar->add_cookie_header($req);
-	my $res = $ua->request($req);
-		
-	unless ($res->is_success) {
-		die 'GET request failed: ' . $baseurl . $path . "\n"
-			. "Status: " . $res->status_line . "\n"
-			. "Request:\n" . $req->as_string . "\n"
-			. "Response headers:\n" . $res->headers_as_string . "\n"
-			. "Response body:\n" . $res->decoded_content . "\n";
+
+    my $i_tasks = 0;
+    my $i_signals = 0;
+    my $i_persdata = 0;
+
+    while (1) {
+
+		my $url = $baseurl . $path;
+		$url .= '?' . $args if ($args);
+		$url .= ($url =~ /\?/ ? '' : '?') . ($start && $limit ? 'start=' . $start . '&limit=' . $limit : '');
+
+		my $xhtml;
+        if ($method eq 'get') {
+            $xhtml = http_get($url);
+        } elsif ($method eq 'post') {
+            $xhtml = http_post($url, $body);
+        } else {
+            die 'Invalid method for http request';
+        }
+
+		# Parse XML
+		my $dom = XML::LibXML->load_xml(string => $xhtml);
+
+		# XPath context with XHTML namespace
+		my $xpc = XML::LibXML::XPathContext->new($dom);
+		$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
+
+        my($div_class_state) = $xpc->findnodes('//x:div[@class="state"]');
+
+        # Websocket url
+        ($object{a_rel_self}) = $xpc->findnodes('.//x:a[@rel="self"]', $div_class_state);
+
+        # Next link
+        my $next = $xpc->findnodes('.//x:a[@rel="next"]', $div_class_state);
+
+        # RobotId
+        my($ctrl_name) = $xpc->findnodes('.//x:span[@class="ctrl-name"]', $div_class_state);
+        my($ctrl_id) = $xpc->findnodes('.//x:span[@class="ctrl-id"]', $div_class_state);
+		$object{span_ctrl_name} = $ctrl_name->textContent if (defined $ctrl_name);
+		$object{span_ctrl_id} = $ctrl_id->textContent if (defined $ctrl_id);
+
+        # List reference
+        my($ul) = $xpc->findnodes('.//x:ul', $div_class_state);	
+
+        # robotware
+        my($ul_li_class_sys_system) = $xpc->findnodes('.//x:li[@class="sys-system"]', $ul);
+        my($robotware) = $xpc->findnodes('.//x:span[@class="rwversionname"]', $ul_li_class_sys_system);
+        my($robotware_build) = $xpc->findnodes('.//x:span[@class="build"]', $ul_li_class_sys_system);
+		$object{ul_li_class_sys_system_span_class_rwversionname} = $robotware->textContent if (defined $robotware);
+		$object{ul_li_class_sys_system_span_class_build} = $robotware_build->textContent if (defined $robotware_build);
+
+        # Tasks
+        for my $li ($xpc->findnodes('.//x:li[@class="rap-task-li"]', $ul)) {
+            my($task_resource) = $xpc->findnodes('.//x:span[@class="name"]', $li);
+			$object{ul_li_rap_rask_li_span_class_name}[$i_tasks] = $task_resource->textContent;
+			$i_tasks++;
+		}
+
+        # IO list
+        for my $li ($xpc->findnodes('.//x:li[@class="ios-signal-li"]', $ul)) {
+            my($sig_resource) = $xpc->findnodes('.//x:a[@rel="self"]', $li);
+			$object{ul_li_ios_signal_li_a_rel_self}[$i_signals] = '/rw/iosystem/' . $sig_resource->getAttribute('href') . ';state';
+			$i_signals++;
+		}
+
+        # Persdata
+        for my $li ($xpc->findnodes('.//x:li[@class="rap-symproppers-li"]', $ul)) {
+            my($pers_resource) = $xpc->findnodes('.//x:span[@class="symburl"]', $li);
+			$object{ul_li_rap_symproppers_li_span_class_symburl}[$i_persdata] = '/rw/rapid/symbol/' . $pers_resource->textContent . '/data;value';
+			$i_persdata++;
+		}
+
+   		last unless $next;
+
+		# Parse next start index from href
+		$start = $1 if ($next =~ /start=(\d+)/);
+		$limit = $1 if ($next =~ /limit=(\d+)/);
+    }
+
+	return %object;
+}
+
+sub http_get {
+    my($url) = @_;
+
+    my $header_accept = 'application/xhtml+xml;v=2.0';
+    my $header_authorization = 'Basic ' . encode_base64($Config->{connection}->{username} . ':' . $Config->{connection}->{password} . '');
+
+    my $req = HTTP::Request->new(
+        GET => $url,
+        [
+            'Accept' => $header_accept,
+            'Authorization' => $header_authorization,
+        ],
+    );
+
+    $ua->cookie_jar->add_cookie_header($req);
+    my $res = $ua->request($req);
+
+    unless ($res->is_success) {
+    die 'GET request failed: ' . $url . "\n"
+        . "Status: " . $res->status_line . "\n"
+        . "Request:\n" . $req->as_string . "\n"
+        . "Response headers:\n" . $res->headers_as_string . "\n"
+        . "Response body:\n" . $res->decoded_content . "\n";
 	}
-	
+
     return $res->decoded_content;
 }
 
-sub rws_post {
-    my($path, $formdata) = @_;
-    my $baseurl = $Config->{connection}->{https} ? 'https://' . $server_ip . ':' . $server_port : 'http://' . $server_ip . ':' . $server_port;
-	
-	my $req = HTTP::Request->new(
-		POST => $baseurl . $path,
-		[
-			'Accept' => 'application/xhtml+xml;v=2.0',
-			'Content-type' => 'application/x-www-form-urlencoded;v=2.0',
-			'Content-length' => length($formdata),
-			'Authorization' => 'Basic ' . encode_base64($Config->{connection}->{username} . ':' . $Config->{connection}->{password} . ''),
-		],
-		$formdata
-	);
-	$ua->cookie_jar->add_cookie_header($req);
-	my $res = $ua->request($req);
+sub http_post {
+    my($url, $body) = @_;
 
-	unless ($res->is_success) {
-		die 'POST request failed: ' . $baseurl . $path . "\n"
-			. "Status: " . $res->status_line . "\n"
-			. "Request:\n" . $req->as_string . "\n"
-			. "Response headers:\n" . $res->headers_as_string . "\n"
-			. "Response body:\n" . $res->decoded_content . "\n";
+    my $header_accept = 'application/xhtml+xml;v=2.0';
+    my $header_content_type = 'application/x-www-form-urlencoded;v=2.0';
+    my $header_authorization = 'Basic ' . encode_base64($Config->{connection}->{username} . ':' . $Config->{connection}->{password} . '');
+
+    my $req = HTTP::Request->new(
+        POST => $url,
+        [
+            'Accept' => $header_accept,
+            'Content-type' => $header_content_type,
+            'Content-length' => length($body),
+            'Authorization' => $header_authorization,
+        ],
+        $body
+    );
+
+    $ua->cookie_jar->add_cookie_header($req);
+    my $res = $ua->request($req);
+
+    unless ($res->is_success) {
+    die 'POST request failed: ' . $url . "\n"
+        . "Status: " . $res->status_line . "\n"
+        . "Request:\n" . $req->as_string . "\n"
+        . "Response headers:\n" . $res->headers_as_string . "\n"
+        . "Response body:\n" . $res->decoded_content . "\n";
 	}
 
     return $res->decoded_content;
@@ -148,38 +247,21 @@ sub rws_post {
 sub list_resources {
     my @resources;
 
-    # IO signals
-    my $start = 0;
-    my $limit = 100;
-    while (1) {
-		print 'Requesting /rw/iosystem/signals?start=' . $start . '&limit=' . $limit . '...';
-		my($next, $ref_signalurls) = xhtml_iolist_parse(rws_get('/rw/iosystem/signals?start=' . $start . '&limit=' . $limit));
-		print 'found ' . scalar(@{$ref_signalurls}) . ' signals' . "\n";
-        push(@resources, @{$ref_signalurls});
-		
-		last unless $next;
-		# Parse next start index from href
-		$start = $1 if ($next =~ /start=(\d+)/);
-		$limit = $1 if ($next =~ /limit=(\d+)/);
-    }
+	print 'Requesting /rw/iosystem/signals...';
+	my %data_io = http_request('get', '/rw/iosystem/signals');
+	print 'found ' . scalar(@{$data_io{ul_li_ios_signal_li_a_rel_self}}) . ' signals' . "\n";
+	push(@resources, @{$data_io{ul_li_ios_signal_li_a_rel_self}});
 
-    # RAPID data
-    my $xhtml_tasks = rws_get('/rw/rapid/tasks');
-    foreach my $task (xhtml_tasks_parse($xhtml_tasks)) {
-        my $start = 0;
-        my $limit = 100;
-        while (1) {
-			print 'Requesting /rw/rapid/symbols/search?start=' . $start . '&limit=' . $limit . ', blockurl=RAPID/' . $task . '...';
-			my($next, $ref_persdataurls) = xhtml_persdata_parse(rws_post('/rw/rapid/symbols/search?start=' . $start . '&limit=' . $limit, 'view=block&vartyp=any&blockurl=RAPID/' . $task . '&recursive=true&onlyused=true&skipshared=false&symtyp=per'));
-			print 'found ' . scalar(@{$ref_persdataurls}) . ' PERS program-data' . "\n";
-            push(@resources, @{$ref_persdataurls});
+	print 'Requesting /rw/rapid/tasks...';
+	my %data_tasks = http_request('get', '/rw/rapid/tasks');
+	print 'found ' . scalar(@{$data_tasks{ul_li_rap_rask_li_span_class_name}}) . ' tasks' . "\n";
 
-			last unless $next;
-			# Parse next start index from href
-			$start = $1 if ($next =~ /start=(\d+)/);
-			$limit = $1 if ($next =~ /limit=(\d+)/);
-        }
-    }
+	foreach my $task (@{$data_tasks{ul_li_rap_rask_li_span_class_name}}) {
+		print 'Requesting /rw/rapid/symbols/search?blockurl=RAPID/' . $task . '...';
+		my(%data_pers) = http_request('post', '/rw/rapid/symbols/search?view=block&vartyp=any&blockurl=RAPID/' . $task . '&recursive=true&onlyused=true&skipshared=false&symtyp=per');
+		print 'found ' . scalar(@{$data_pers{ul_li_rap_symproppers_li_span_class_symburl}}) . ' PERS program-data' . "\n";
+		push(@resources, @{$data_pers{ul_li_rap_symproppers_li_span_class_symburl}});
+	}
 
     open(my $fh, '>', $file_server_resources) or die 'Cannot write "' . $file_server_resources . '"' . "\n";
     print $fh $_ . "\n" for @resources;
@@ -189,91 +271,10 @@ sub list_resources {
     exit 0;
 }
 
-sub xhtml_tasks_parse {
-	my($xhtml) = @_;
 
-	my @list;
-	
-	# Parse XML
-	my $dom = XML::LibXML->load_xml(string => $xhtml);
 
-	# XPath context with XHTML namespace
-	my $xpc = XML::LibXML::XPathContext->new($dom);
-	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
 
-	# Locate <div class="state", then try to find link to next page	
-	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
 
-	# Parsing IO loop, Locate <ul in <div class="state", and loop through all <li class="ios-signal-li tags
-	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);	
-	for my $li ($xpc->findnodes('.//x:li[@class="rap-task-li"]', $ul)) {
-		# Find the <a href="foobar" rel="self"
-		my ($a) = $xpc->findnodes('.//x:span[@class="name"]', $li);
-		next unless $a;
-		# Add foobar to resultarray
-		push(@list, $a->textContent);
-	}
-	
-	# If we find a next-page-href, we add it, then the results.
-	return(@list);
-}
-
-sub xhtml_iolist_parse {
-	my($xhtml) = @_;
-	
-	my @list;
-	
-	# Parse XML
-	my $dom = XML::LibXML->load_xml(string => $xhtml);
-
-	# XPath context with XHTML namespace
-	my $xpc = XML::LibXML::XPathContext->new($dom);
-	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
-
-	# Locate <div class="state", then try to find link to next page	
-	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
-	my ($a_next) = $xpc->findnodes('.//x:a[@rel="next"]', $div_state);
-
-	# Parsing IO loop, Locate <ul in <div class="state", and loop through all <li class="ios-signal-li tags
-	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);	
-	for my $li ($xpc->findnodes('.//x:li[@class="ios-signal-li"]', $ul)) {
-		# Find the <a href="foobar" rel="self"
-		my ($a) = $xpc->findnodes('.//x:a[@rel="self"]', $li);
-		next unless $a;
-		# Add foobar to resultarray
-		push(@list, '/rw/iosystem/' . $a->getAttribute('href') . ';state');
-	}
-	
-	# If we find a next-page-href, we add it, then the results.
-	return($a_next ? $a_next->getAttribute('href') : undef, \@list);
-}
-
-sub xhtml_persdata_parse {
-    my($xhtml) = @_;
-
-	my @list;
-	
-	# Parse XML
-	my $dom = XML::LibXML->load_xml(string => $xhtml);
-
-	# XPath context with XHTML namespace
-	my $xpc = XML::LibXML::XPathContext->new($dom);
-	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
-
-	# Locate <div class="state", then try to find link to next page	
-	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
-	my ($a_next) = $xpc->findnodes('.//x:a[@rel="next"]', $div_state);
-
-	# Parsing persdata loop, Locate <ul in <div class="state", and loop through all <li class="rap-symproppers-li tags
-	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);	
-	for my $li ($xpc->findnodes('//x:li[@class="rap-symproppers-li"]')) {
-		my ($a) = $xpc->findnodes('.//x:span[@class="symburl"]', $li);
-		next unless $a;
-		push(@list, '/rw/rapid/symbol/' . $a->textContent . '/data;value');
-	}
-	
-	return($a_next ? $a_next->getAttribute('href') : undef, \@list);
-}
 
 sub xhtml_wssurl_parse {
     my($xhtml) = @_;
@@ -292,43 +293,8 @@ sub xhtml_wssurl_parse {
 	return($a_next ? $a_next->getAttribute('href') : undef);
 }
 
-sub xhtml_robotid_parse {
-    my($xhtml) = @_;
-	
-	# Parse XML
-	my $dom = XML::LibXML->load_xml(string => $xhtml);
 
-	# XPath context with XHTML namespace
-	my $xpc = XML::LibXML::XPathContext->new($dom);
-	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
 
-	# Locate <div class="state", then try to find link to self page	which is subscription websocket url
-	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
-	my ($span_ctrl_name) = $xpc->findnodes('.//x:span[@class="ctrl-name"]', $div_state);
-	my ($span_ctrl_id) = $xpc->findnodes('.//x:span[@class="ctrl-id"]', $div_state);
-	
-	return(($span_ctrl_id ? $span_ctrl_id->textContent : '<ctrl-id>') . ' (' . ($span_ctrl_name ? $span_ctrl_name->textContent : '<ctrl-name>') . ')');
-}
-
-sub xhtml_robotware_parse {
-    my($xhtml) = @_;
-	
-	# Parse XML
-	my $dom = XML::LibXML->load_xml(string => $xhtml);
-
-	# XPath context with XHTML namespace
-	my $xpc = XML::LibXML::XPathContext->new($dom);
-	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
-
-	# Locate <div class="state", then try to find link to self page	which is subscription websocket url
-	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
-	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);
-	my ($li) = $xpc->findnodes('.//x:li[@class="sys-system"]', $ul);
-	my ($span_rwversionname) = $xpc->findnodes('.//x:span[@class="rwversionname"]', $li);
-	my ($span_build) = $xpc->findnodes('.//x:span[@class="build"]', $li);
-	
-	return(($span_rwversionname ? $span_rwversionname->textContent : '<rwversionname>') . ' build ' . ($span_build ? $span_build->textContent : '<build>'));
-}
 
 
 
