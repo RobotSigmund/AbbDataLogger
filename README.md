@@ -62,5 +62,27 @@ Each update will show only the Pers-programdata name or the IO name. Not the who
 Will verbose both to the console window and a logfile.
 
 
+## Troubleshooting
+
+### Windows
+
+Install strawberryperl; [strawberryperl.com](https://strawberryperl.com/).
+
+### Missing modules
+
+Open the perlfile in a text editor. All necessary modules are listet at the beginnning of the file. Example: *use Foo::Bar;*
+
+#### Linux
+
+Open terminal. Install using cpan.
+
+```cpan install Foo::Bar```
+
+#### Windows
+
+Go to strawberryperl in the start menu. Run cpan client.
+
+```install Foo::Bar```
+
 
 
