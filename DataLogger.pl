@@ -104,8 +104,8 @@ sub http_request {
     while (1) {
 
 		my $url = $baseurl . $path;
-		$url .= '?' . $args if ($args);
-		$url .= ($url =~ /\?/ ? '' : '?') . ($start && $limit ? 'start=' . $start . '&limit=' . $limit : '');
+		$url .=  ($start ? ($url =~ /\?/ ? '' : '?') . 'start=' . $start : '');
+		$url .=  ($limit ? ($url =~ /\?/ ? '' : '?') . 'limit=' . $limit : '');
 
 		my $xhtml;
         if ($method eq 'get') {
@@ -126,10 +126,11 @@ sub http_request {
         my($div_class_state) = $xpc->findnodes('//x:div[@class="state"]');
 
         # Websocket url
-        ($object{a_rel_self}) = $xpc->findnodes('.//x:a[@rel="self"]', $div_class_state);
+        my($websocket_url) = $xpc->findnodes('.//x:a[@rel="self"]', $div_class_state);
+		$object{a_rel_self} = $websocket_url->getAttribute('href');
 
         # Next link
-        my $next = $xpc->findnodes('.//x:a[@rel="next"]', $div_class_state);
+        my($next) = $xpc->findnodes('.//x:a[@rel="next"]', $div_class_state);
 
         # RobotId
         my($ctrl_name) = $xpc->findnodes('.//x:span[@class="ctrl-name"]', $div_class_state);
@@ -249,18 +250,18 @@ sub list_resources {
 
 	print 'Requesting /rw/iosystem/signals...';
 	my %data_io = http_request('get', '/rw/iosystem/signals');
-	print 'found ' . scalar(@{$data_io{ul_li_ios_signal_li_a_rel_self}}) . ' signals' . "\n";
-	push(@resources, @{$data_io{ul_li_ios_signal_li_a_rel_self}});
+	print 'found ' . (defined $data_io{ul_li_ios_signal_li_a_rel_self} ? scalar(@{$data_io{ul_li_ios_signal_li_a_rel_self}}) : '0') . ' signals' . "\n";
+	push(@resources, (defined $data_io{ul_li_ios_signal_li_a_rel_self} ? @{$data_io{ul_li_ios_signal_li_a_rel_self}} : ()));
 
 	print 'Requesting /rw/rapid/tasks...';
 	my %data_tasks = http_request('get', '/rw/rapid/tasks');
-	print 'found ' . scalar(@{$data_tasks{ul_li_rap_rask_li_span_class_name}}) . ' tasks' . "\n";
+	print 'found ' . (defined $data_tasks{ul_li_rap_rask_li_span_class_name} ? scalar(@{$data_tasks{ul_li_rap_rask_li_span_class_name}}) : '0') . ' tasks' . "\n";
 
 	foreach my $task (@{$data_tasks{ul_li_rap_rask_li_span_class_name}}) {
-		print 'Requesting /rw/rapid/symbols/search?blockurl=RAPID/' . $task . '...';
-		my(%data_pers) = http_request('post', '/rw/rapid/symbols/search?view=block&vartyp=any&blockurl=RAPID/' . $task . '&recursive=true&onlyused=true&skipshared=false&symtyp=per');
-		print 'found ' . scalar(@{$data_pers{ul_li_rap_symproppers_li_span_class_symburl}}) . ' PERS program-data' . "\n";
-		push(@resources, @{$data_pers{ul_li_rap_symproppers_li_span_class_symburl}});
+		print 'Requesting /rw/rapid/symbols/search' . '...';
+		my(%data_pers) = http_request('post', '/rw/rapid/symbols/search', 'view=block&vartyp=any&blockurl=RAPID/' . $task . '&recursive=true&onlyused=true&skipshared=false&symtyp=per');
+		print 'found ' . (defined $data_pers{ul_li_rap_symproppers_li_span_class_symburl} ? scalar(@{$data_pers{ul_li_rap_symproppers_li_span_class_symburl}}) : '0') . ' PERS program-data' . "\n";
+		push(@resources, (defined $data_pers{ul_li_rap_symproppers_li_span_class_symburl} ? @{$data_pers{ul_li_rap_symproppers_li_span_class_symburl}} : ()));
 	}
 
     open(my $fh, '>', $file_server_resources) or die 'Cannot write "' . $file_server_resources . '"' . "\n";
@@ -270,31 +271,6 @@ sub list_resources {
     print 'Saved ' . scalar(@resources) . ' resources to "' . $file_server_resources . '"' . "\n";
     exit 0;
 }
-
-
-
-
-
-
-sub xhtml_wssurl_parse {
-    my($xhtml) = @_;
-	
-	# Parse XML
-	my $dom = XML::LibXML->load_xml(string => $xhtml);
-
-	# XPath context with XHTML namespace
-	my $xpc = XML::LibXML::XPathContext->new($dom);
-	$xpc->registerNs(x => 'http://www.w3.org/1999/xhtml');
-
-	# Locate <div class="state", then try to find link to self page	which is subscription websocket url
-	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
-	my ($a_next) = $xpc->findnodes('.//x:a[@rel="self"]', $div_state);
-	
-	return($a_next ? $a_next->getAttribute('href') : undef);
-}
-
-
-
 
 
 
@@ -350,9 +326,10 @@ sub start_subscription {
 
     # Send subscription request
     print 'Sending subscription request...';
-    my $xhtml_subscription = rws_post('/subscription', $subbody);
+    my %data_ws = http_request('post', '/subscription', $subbody);
+		die 'Missing websocket url from controller request' unless (defined $data_ws{a_rel_self});
+	my $ws_url = $data_ws{a_rel_self};
     print 'ok' . "\n";
-    my $ws_url = xhtml_wssurl_parse($xhtml_subscription);
 	
     print 'Connecting to websocket (' . $ws_url . ')...';
 	my $abb_cookies = getHttpCookies();
@@ -412,12 +389,10 @@ sub ProcessSubscriptionInit {
 	printl("\n" . '### New session' . "\n");
 	printl(TimeStampTime() . ' Date: ' . TimeStampDate() . "\n");
 	printl(TimeStampTime() . ' Server: ' . $Config->{connection}->{server_ip} . ':' . $Config->{connection}->{server_port} . "\n");
-	my $xhtml_robotid = rws_get('/ctrl/identity');
-	my $robotid = xhtml_robotid_parse($xhtml_robotid);
-	printl(TimeStampTime() . ' ControllerId: ' . $robotid . "\n");
-	my $xhtml_robotware = rws_get('/rw/system');
-	my $robotware = xhtml_robotware_parse($xhtml_robotware);
-	printl(TimeStampTime() . ' Robotware: ' . $robotware . "\n");
+	my %data_robotid = http_request('get', '/ctrl/identity');
+	printl(TimeStampTime() . ' ControllerId: ' . (defined $data_robotid{span_ctrl_id} ? $data_robotid{span_ctrl_id} : '<CtrlId>') . ' (' . (defined $data_robotid{span_ctrl_name} ? $data_robotid{span_ctrl_name} : '<CtrlName>') . ')' . "\n");
+	my %data_robotware = http_request('get', '/rw/system');
+	printl(TimeStampTime() . ' Robotware: ' . (defined $data_robotware{ul_li_class_sys_system_span_class_rwversionname} ? $data_robotware{ul_li_class_sys_system_span_class_rwversionname} : '<Robotware>') . ' (' . (defined $data_robotware{ul_li_class_sys_system_span_class_build} ? $data_robotware{ul_li_class_sys_system_span_class_build} : '<build>') . ')' . "\n");
 }
 
 
@@ -434,27 +409,6 @@ sub ProcessSubscriptionMessage {
 
 	# Locate <div class="state", then try to find link to next page	
 	my ($div_state) = $xpc->findnodes('//x:div[@class="state"]');
-
-
-
-	# Example websocket subscription update for Pers-data:
-	# <?xml version="1.0" encoding="utf-8"?>
-	# <html xmlns="http://www.w3.org/1999/xhtml"> 
-	# <head>
-	#   <base href="https://192.168.125.1:443/"/> 
-	# </head>
-	# <body> 
-	#   <div class="state">
-	#     <a href="subscription/56" rel="group"></a>
-	#     <ul> 
-	#       <li class="rap-value-ev" title="value">
-	#         <a href="/rw/rapid/symbol/RAPID/T_PLC/R2StraighteningStnMod/nR2StraightenerPlcRsp/data" rel="self"/> 
-	#         <span class="value">0</span>
-	#       </li>  
-	#     </ul> 
-	#   </div>
-	# </body>
-	# </html>
 	
 	# Parsing persdata loop, Locate <ul in <div class="state", and loop through all <li class="rap-symproppers-li tags
 	my ($ul) = $xpc->findnodes('.//x:ul', $div_state);	
@@ -468,30 +422,6 @@ sub ProcessSubscriptionMessage {
 		$resource_shortname = $1 if ($resource_name =~ /\/([\w_]+)\/data/);
 		printl(TimeStampTime() . ' ' . ($arg_short_naming ? $resource_shortname : $resource_name) . '=' . $b->textContent . "\n");
 	}
-	
-	
-	
-	# Example websocket subscription update for IO:
-	# <?xml version="1.0" encoding="utf-8"?>
-	# <html xmlns="http://www.w3.org/1999/xhtml">
-	# <head>
-	#   <base href="https://192.168.125.1:443/"/>
-	# </head>
-	# <body>
-	#   <div class="state">
-	#     <a href="subscription/53" rel="group"></a>
-	#     <ul>
-	#       <li class="ios-signalstate-ev" title="PROFINET/CPX_R2_Fixture/doR2StraightenerCylOut">
-	#         <a href="/rw/iosystem/signals/PROFINET/CPX_R2_Fixture/doR2StraightenerCylOut;state" rel="self"/>
-	#         <span class="lvalue">0</span>
-	#         <span class="lstate">not simulated</span>
-	#         <span class="quality">good</span>
-	#         <span class="time">276117</span>
-	#       </li>
-	#     </ul>
-	#   </div>
-	# </body>
-	# </html>
 
 	for my $li ($xpc->findnodes('//x:li[@class="ios-signalstate-ev"]')) {
 		my ($a) = $xpc->findnodes('.//x:a[@rel="self"]', $li);
