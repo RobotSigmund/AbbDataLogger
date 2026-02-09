@@ -1,5 +1,23 @@
 #!/usr/bin/perl
 
+# AbbDataLogger - Webservices datalogger for IO and persdata on Abb robotcontrollers
+# Copyright (C) 2026 Sigmund Straumland
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+	
+	
+	
 use strict;
 use warnings;
 
@@ -258,7 +276,7 @@ sub list_resources {
 	print 'found ' . (defined $data_tasks{ul_li_rap_rask_li_span_class_name} ? scalar(@{$data_tasks{ul_li_rap_rask_li_span_class_name}}) : '0') . ' tasks' . "\n";
 
 	foreach my $task (@{$data_tasks{ul_li_rap_rask_li_span_class_name}}) {
-		print 'Requesting /rw/rapid/symbols/search' . '...';
+		print 'Requesting /rw/rapid/symbols/search (' . $task . ')...';
 		my(%data_pers) = http_request('post', '/rw/rapid/symbols/search', 'view=block&vartyp=any&blockurl=RAPID/' . $task . '&recursive=true&onlyused=true&skipshared=false&symtyp=per');
 		print 'found ' . (defined $data_pers{ul_li_rap_symproppers_li_span_class_symburl} ? scalar(@{$data_pers{ul_li_rap_symproppers_li_span_class_symburl}}) : '0') . ' PERS program-data' . "\n";
 		push(@resources, (defined $data_pers{ul_li_rap_symproppers_li_span_class_symburl} ? @{$data_pers{ul_li_rap_symproppers_li_span_class_symburl}} : ()));
@@ -279,7 +297,7 @@ sub list_resources {
 # -------------------------
 
 sub read_listen_resources {
-    open(my $fh, '<', $file_listen_resources) or die 'Cannot read "' . $file_listen_resources . '"' . "\n";
+    open(my $fh, '<', $file_listen_resources) or return ();
     my @res;
     while (<$fh>) {
         chomp;
@@ -299,7 +317,7 @@ sub read_listen_resources {
 sub start_subscription {
     print 'Reading "' . $file_listen_resources . '"...';
     my @resources = read_listen_resources();
-        die 'No resources in "' . $file_listen_resources . '"' . "\n" unless @resources;
+        ShowHelp() unless @resources;
     print 'ok' . "\n";
     # Build request body
     my $subbody;
@@ -460,11 +478,35 @@ sub printl {
 	}
 }
 
+sub ShowHelp {
+	print <<EOM;
+
+Usage:
+
+DataLogger.pl --reset_config
+	Create a new config file. Should work out-of-the-box when using management
+	port on	robotcontroller.
+
+DataLogger.pl --list_resources
+	Connect to controller ask for all IO and Persdata resources available.
+	Dump everything into ServerResources.txt .
+
+DataLogger.pl [--short_naming] [--log=<file>]
+	Start logging of selected resources. Select resources by copying lines from
+	ServerResources.txt into ListenResources.txt . If this file is missing you
+	get to read this again :)
+
+EOM
+	exit 1;
+}
+
+
 
 # -------------------------
 # Main
 # -------------------------
 
+printl 'AbbDataLogger rev2026-02-09 - https://github.com/RobotSigmund' . "\n";
 list_resources() if ($arg_list_resources);
 
 start_subscription();
