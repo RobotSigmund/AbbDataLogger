@@ -17,7 +17,8 @@ Will generate a new DataLogger.ini file. If you connect through the controller s
 
 
 *DataLogger.ini*:  
-```[connection]
+```
+[connection]
 https=1
 password=robotics
 server_ip=192.168.125.1
