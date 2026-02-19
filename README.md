@@ -69,9 +69,11 @@ Will verbose both to the console window and a logfile.
 
 Install strawberryperl; [strawberryperl.com](https://strawberryperl.com/).
 
+
 ### Missing modules
 
 Open the perlfile in a text editor. All necessary modules are listet at the beginnning of the file. Example: *use Foo::Bar;*
+
 
 #### Linux
 
@@ -79,11 +81,28 @@ Open terminal. Install using cpan.
 
 ```cpan install Foo::Bar```
 
+
 #### Windows
 
 Go to strawberryperl in the start menu. Run cpan client.
 
 ```install Foo::Bar```
 
+
+## Virtual controllers
+
+Specify a fixed listening port in the robotstudio config file. It should be located in the following folder:
+
+```C:\Users\<User>\AppData\Local\ABB\RobotWare\RobotControl_7.12.0\system\appweb.conf```
+
+Default port should be 80. If it is taken, the controller will loop through a couple of standard ports.
+
+Scan for listening open ports with ```netstat -ab```. Look for a process named *[Vrchost64.exe]*.
+
+A quick test is to ask for controller serial in the webbrowser or any Rest Api client.
+
+```https://127.0.0.1:80/ctrl/identity/```
+
+If you found the right one it will ask for credentials. Enter  ```Default User/robotics``` and it will show you XML containing controller name and serial.
 
 
