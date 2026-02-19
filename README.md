@@ -11,7 +11,7 @@ Standard Perl modules are used for all network activity and XHTML data parsing. 
 
 ```DataLogger.pl --reset_config```
 
-Will generate a new DataLogger.ini file. If you connect through the controller sevice port, this should be ok. Otherwise modify to custom IP, user, pass etc.
+Will generate a new DataLogger.ini file. If you connect through the controller service port, the generated configuration file will work without modifications. Otherwise modify to custom IP, username and password etc.
 
 <img width="1113" height="123" alt="image" src="https://github.com/user-attachments/assets/a2866ab0-fbcf-4013-bfde-85198f12bf66" />
 
@@ -95,7 +95,7 @@ Specify a fixed listening port in the robotstudio config file. It should be loca
 
 ```C:\Users\<User>\AppData\Local\ABB\RobotWare\RobotControl_7.12.0\system\appweb.conf```
 
-Default port should be 80. If it is taken, the controller will loop through a couple of standard ports.
+Default port should be 80. If it is taken, the controller will loop through several standard ports.
 
 Scan for listening open ports with ```netstat -ab```. Look for a process named *[Vrchost64.exe]*.
 
