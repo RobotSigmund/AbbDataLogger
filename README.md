@@ -91,17 +91,27 @@ Go to strawberryperl in the start menu. Run cpan client.
 
 ## Virtual controllers
 
-Specify a fixed listening port in the robotstudio config file. It should be located in the following folder:
+Typicly listens on port 80. If this is allready reserved it will try several standard ports (80, 5466, 9403, 9805, 11622, 19985, 31015, 34250, 40129, 45003). If none are available a random port will be picked.
+
+Find the active port in an elevated console.
+
+```tasklist | findstr Vrchost64.exe```
+
+Use the found PID to list active ports
+
+```netstat -aon | findstr <PID>```
+
+<img width="978" height="262" alt="image" src="https://github.com/user-attachments/assets/e3a7c930-cbfe-441d-9e0c-b8720976604d" />
+
+You can also specify a fixed port by changing the robotstudio config file.
 
 ```C:\Users\<User>\AppData\Local\ABB\RobotWare\RobotControl_7.12.0\system\appweb.conf```
 
-Default port should be 80. If it is taken, the controller will loop through several standard ports.
-
-Scan for listening open ports with ```netstat -ab```. Look for a process named *[Vrchost64.exe]*.
+Read more [here](https://tech-community.robotics.abb.com/t/how-to-change-the-listening-port-of-the-virtual-controller-robotware-6-x-and-7-x/9505).
 
 A quick test is to ask for controller serial in the webbrowser or any Rest Api client.
 
-```https://127.0.0.1:80/ctrl/identity/```
+```https://127.0.0.1:<port>/ctrl/identity/```
 
 If you found the right one it will ask for credentials. Enter  ```Default User/robotics``` and it will show you XML containing controller name and serial.
 
