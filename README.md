@@ -111,8 +111,22 @@ Read more [here](https://tech-community.robotics.abb.com/t/how-to-change-the-lis
 
 A quick test is to ask for controller serial in the webbrowser or any Rest Api client.
 
-```https://127.0.0.1:<port>/ctrl/identity/```
+```
+C:\>tasklist | findstr Vrchost64.exe
+Vrchost64.exe                14280 Console                    1     33,360 K
+Vrchost64.exe                 1852 Console                    1     26,460 K
 
-If you found the right one it will ask for credentials. Enter  ```Default User/robotics``` and it will show you XML containing controller name and serial.
+C:\>netstat -aon | findstr 14280
+  TCP    0.0.0.0:9403           0.0.0.0:0              LISTENING       14280
+  TCP    0.0.0.0:54557          0.0.0.0:0              LISTENING       14280
+  TCP    127.0.0.1:54557        127.0.0.1:54559        ESTABLISHED     14280
+  TCP    [::]:9403              [::]:0                 LISTENING       14280
+  UDP    0.0.0.0:64984          *:*                                    14280
+  UDP    127.0.0.1:64989        *:*                                    14280
 
+C:\>curl -k -u "Default User:robotics" -H "Accept: application/xhtml+xml;v=2.0" https://127.0.0.1:9403/ctrl/identity
+<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"> <head> <base href="https://127.0.0.1:9403/ctrl/identity/" /> </head> <body>  <div class="state">  <a href="" rel="self"></a>  <ul> <li class="ctrl-identity-info" title="identity"><span class="ctrl-name">Controller20</span><span class="ctrl-type">VIRTUAL_CONTROLLER</span> </li>  </ul> </div> </body></html>
+C:\>
+
+```
 
