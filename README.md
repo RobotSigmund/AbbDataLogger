@@ -101,14 +101,6 @@ Use the found PID to list active ports
 
 ```netstat -aon | findstr <PID>```
 
-<img width="978" height="262" alt="image" src="https://github.com/user-attachments/assets/e3a7c930-cbfe-441d-9e0c-b8720976604d" />
-
-You can also specify a fixed port by changing the robotstudio config file.
-
-```C:\Users\<User>\AppData\Local\ABB\RobotWare\RobotControl_7.12.0\system\appweb.conf```
-
-Read more [here](https://tech-community.robotics.abb.com/t/how-to-change-the-listening-port-of-the-virtual-controller-robotware-6-x-and-7-x/9505).
-
 A quick test is to ask for controller serial in the webbrowser or any Rest Api client.
 
 ```
@@ -127,6 +119,10 @@ C:\>netstat -aon | findstr 14280
 C:\>curl -k -u "Default User:robotics" -H "Accept: application/xhtml+xml;v=2.0" https://127.0.0.1:9403/ctrl/identity
 <?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"> <head> <base href="https://127.0.0.1:9403/ctrl/identity/" /> </head> <body>  <div class="state">  <a href="" rel="self"></a>  <ul> <li class="ctrl-identity-info" title="identity"><span class="ctrl-name">Controller20</span><span class="ctrl-type">VIRTUAL_CONTROLLER</span> </li>  </ul> </div> </body></html>
 C:\>
-
 ```
 
+You can also specify a fixed port by changing the robotstudio config file.
+
+```C:\Users\<User>\AppData\Local\ABB\RobotWare\RobotControl_7.12.0\system\appweb.conf```
+
+Read more [here](https://tech-community.robotics.abb.com/t/how-to-change-the-listening-port-of-the-virtual-controller-robotware-6-x-and-7-x/9505).
